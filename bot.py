@@ -22,7 +22,7 @@ from telegram.ext import (
 # =========================
 # EDIT THESE
 # =========================
-BOT_TOKEN = os.getenv("8400569898:AAH5s3bRm7BiC-tSHcrIOG1hjbSOaNKG_kc")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = 8021775847# your Telegram chat ID (number only)
 
 # Your services
