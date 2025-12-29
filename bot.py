@@ -43,17 +43,22 @@ def start_dummy_server():
 # EDIT THESE
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is missing. Set it in Render Environment Variables.")
 ADMIN_CHAT_ID = 8021775847  # your Telegram chat ID (number only)
 SUPPORT_USERNAME = "wesamhm1"  # without @
 SUPPORT_URL = f"https://t.me/{SUPPORT_USERNAME}"
 SUPPORT_COOLDOWN_SECONDS = 60 * 60  # 1 hour
 
-
-# Your services
+# Your services (UPDATED PRICES)
 SERVICES = {
-    "yt_premium": {"name": "YouTube Premium", "price": 500},
-    "adobe": {"name": "Adobe", "price": 250},
-    "chatgpt_1m": {"name": "ChatGPT 1 Month", "price": 1},
+    "disney_1m": {"name": "Disney+ 1 Month", "price": 150},
+    "chatgpt_1m": {"name": "ChatGPT 1 Month", "price": 250},
+    "yt_premium": {"name": "YouTube Premium 1 Month", "price": 200},
+    "spotify_1m": {"name": "Spotify 1 Month", "price": 175},
+
+    # 🔧 Test / Donation (for owner testing)
+    "donation_1": {"name": "☕ Donation / Test Payment", "price": 1},
 }
 
 logging.basicConfig(
@@ -377,4 +382,5 @@ if __name__ == "__main__":
 
     asyncio.set_event_loop(asyncio.new_event_loop())
     application = build_app()
+
     application.run_polling()
