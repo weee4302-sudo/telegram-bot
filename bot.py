@@ -2,6 +2,7 @@ import logging
 import asyncio
 import re
 import os
+import time
 
 from telegram import (
     Update,
@@ -37,11 +38,16 @@ def start_dummy_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
+
 # =========================
 # EDIT THESE
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = 8021775847# your Telegram chat ID (number only)
+ADMIN_CHAT_ID = 8021775847  # your Telegram chat ID (number only)
+SUPPORT_USERNAME = "wesamhm1"  # without @
+SUPPORT_URL = f"https://t.me/{SUPPORT_USERNAME}"
+SUPPORT_COOLDOWN_SECONDS = 60 * 60  # 1 hour
+
 
 # Your services
 SERVICES = {
@@ -79,6 +85,89 @@ def continue_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ I've Paid (Continue)", callback_data="i_paid")]
     ])
+
+
+def support_keyboard_locked(remaining_seconds: int) -> InlineKeyboardMarkup:
+    # Button stays locked (callback), so we can show a popup message if clicked
+    mins = max(0, remaining_seconds) // 60
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🔒 Contact Support (available in {mins} min)", callback_data="support_locked")]
+    ])
+
+
+def support_keyboard_unlocked() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)]
+    ])
+
+
+def format_mmss(seconds: int) -> str:
+    seconds = max(0, seconds)
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m:02d}:{s:02d}"
+
+
+# ---------- Countdown job ----------
+async def update_support_countdown(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    data = job.data or {}
+
+    chat_id = data.get("chat_id")
+    message_id = data.get("message_id")
+    start_ts = data.get("start_ts")
+
+    if not (chat_id and message_id and start_ts):
+        job.schedule_removal()
+        return
+
+    elapsed = int(time.time() - start_ts)
+    remaining = SUPPORT_COOLDOWN_SECONDS - elapsed
+
+    if remaining <= 0:
+        # Unlock support
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=support_keyboard_unlocked()
+            )
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=(
+                    "✅ Your order is still being processed.\n\n"
+                    "If you did not receive the activation within the expected time, "
+                    "you can now contact support below."
+                ),
+                reply_markup=support_keyboard_unlocked()
+            )
+        except Exception:
+            # If edit fails (message changed/deleted), just stop job.
+            pass
+
+        job.schedule_removal()
+        return
+
+    # Update countdown text (every minute)
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=(
+                "✅ Payment received successfully!\n\n"
+                "⚙️ Your order is being processed\n"
+                "📦 Preparing your activation...\n"
+                "⏳ This usually takes a few minutes (up to 60 minutes).\n\n"
+                "📧 Activation details will be sent to your email.\n\n"
+                "⬇️⬇️⬇️\n"
+                f"⏱ Support will be available in: {format_mmss(remaining)}"
+            ),
+            reply_markup=support_keyboard_locked(remaining)
+        )
+    except Exception:
+        # If edit fails, stop to avoid spam/errors
+        job.schedule_removal()
 
 
 # ---------- Handlers ----------
@@ -179,6 +268,21 @@ def is_valid_email(email: str) -> bool:
     return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) is not None
 
 
+async def support_locked_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # Calculate remaining from stored timestamp if available
+    start_ts = context.user_data.get("support_start_ts")
+    if not start_ts:
+        await query.answer("Support will be available later.", show_alert=True)
+        return
+
+    remaining = SUPPORT_COOLDOWN_SECONDS - int(time.time() - start_ts)
+    await query.answer(
+        f"Please wait. Support will be available in {format_mmss(remaining)}.",
+        show_alert=True
+    )
+
+
 async def email_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("awaiting_email"):
         return
@@ -193,9 +297,33 @@ async def email_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_email"] = False
     context.user_data["email"] = email
 
-    await update.message.reply_text(
-        "✅ Thank you!\n"
-        "Your activation will be sent to your email shortly."
+    # --- Send processing message with countdown + locked support button ---
+    start_ts = time.time()
+    context.user_data["support_start_ts"] = start_ts
+
+    processing_msg = await update.message.reply_text(
+        "✅ Payment received successfully!\n\n"
+        "⚙️ Your order is being processed\n"
+        "📦 Preparing your activation...\n"
+        "⏳ This usually takes a few minutes (up to 60 minutes).\n\n"
+        "📧 Activation details will be sent to your email.\n\n"
+        "⬇️⬇️⬇️\n"
+        f"⏱ Support will be available in: {format_mmss(SUPPORT_COOLDOWN_SECONDS)}",
+        reply_markup=support_keyboard_locked(SUPPORT_COOLDOWN_SECONDS)
+    )
+
+    # Start a repeating job to update countdown every 60 seconds
+    # (It will unlock support automatically when time is over.)
+    context.job_queue.run_repeating(
+        update_support_countdown,
+        interval=60,
+        first=60,
+        data={
+            "chat_id": processing_msg.chat_id,
+            "message_id": processing_msg.message_id,
+            "start_ts": start_ts
+        },
+        name=f"support_cd_{update.effective_user.id}"
     )
 
     # Notify admin
@@ -234,8 +362,11 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
     app.add_handler(CallbackQueryHandler(i_paid_handler, pattern=r"^i_paid$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, email_handler))
 
+    # Support locked button handler
+    app.add_handler(CallbackQueryHandler(support_locked_handler, pattern=r"^support_locked$"))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, email_handler))
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
     return app
