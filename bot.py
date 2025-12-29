@@ -18,6 +18,24 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# --- Dummy HTTP server for Render ---
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        return
+
+def start_dummy_server():
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
 
 # =========================
 # EDIT THESE
@@ -224,6 +242,8 @@ def build_app() -> Application:
 
 
 if __name__ == "__main__":
+    threading.Thread(target=start_dummy_server, daemon=True).start()
+
     asyncio.set_event_loop(asyncio.new_event_loop())
     application = build_app()
     application.run_polling()
