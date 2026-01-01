@@ -58,9 +58,9 @@ SUPPORT_COOLDOWN_SECONDS = 60 * 60  # 1 hour
 # Your services (UPDATED PRICES)
 SERVICES = {
     "disney_1m": {"name": "Disney+ 1 Month", "price": 150},
-    "chatgpt_1m": {"name": "ChatGPT 1 Month", "price": 250},
-    "yt_premium": {"name": "YouTube Premium 1 Month", "price": 200},
-    "spotify_1m": {"name": "Spotify 1 Month", "price": 175},
+    "chatgpt_1m": {"name": "ChatGPT 1 Month", "price": 270},
+    "yt_premium": {"name": "YouTube Premium 1 Month", "price": 270},
+    "spotify_1m": {"name": "Spotify 1 Month", "price": 225},
 
     # 🔧 Test / Donation (for owner testing)
     "donation_1": {"name": "☕ Donation / Test Payment", "price": 1},
@@ -389,5 +389,6 @@ if __name__ == "__main__":
     application = build_app()
 
     application.run_polling()
+
 
 
