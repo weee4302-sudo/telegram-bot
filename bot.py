@@ -684,4 +684,13 @@ def build():
     return app
 
 if __name__ == "__main__":
-    build().run_polling()
+    app = build()
+
+    async def on_startup(application):
+        # 🔥 مهم جدًا: احذف أي webhook قديم لنفس التوكن
+        await application.bot.delete_webhook(drop_pending_updates=True)
+
+    app.post_init = on_startup
+
+    app.run_polling(drop_pending_updates=True)
+
