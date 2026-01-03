@@ -41,17 +41,15 @@ logging.basicConfig(
 
 # ================== SERVICES ==================
 SERVICES = {
-    "disney":  {"name": "Disney+ 1 Month",         "usd": "$5.49", "stars": 450},
-    "chatgpt": {"name": "ChatGPT 1 Month",         "usd": "$5.99", "stars": 470},
-    "yt":      {"name": "YouTube Premium 1 Month", "usd": "$5.99", "stars": 470},
-    "spotify": {"name": "Spotify 1 Month",         "usd": "$4.99", "stars": 420},
+    "disney":   {"name": "Disney+ 1 Month",         "usd": "$5.49", "stars": 450},
+    "chatgpt":  {"name": "ChatGPT 1 Month",         "usd": "$5.99", "stars": 470},
+    "yt":       {"name": "YouTube Premium 1 Month", "usd": "$5.99", "stars": 470},
+    "spotify":  {"name": "Spotify 1 Month",         "usd": "$4.99", "stars": 420},
+
+    # 🔧 Test / Donation
+    "donation": {"name": "☕ Donation / Test Payment", "usd": "$0.10", "stars": 1},
 }
-"donation": {
-    "name": "☕ Donation / Test Payment",
-    "usd": "$0.10",
-    "stars": 1
-},
-}
+
 # ================== PERSISTENT USERS ==================
 USERS_FILE = "users.json"
 
@@ -112,8 +110,8 @@ TEXT = {
             f"`{USDT_ADDRESS}`\n\n"
             "✅ After you pay, click *I've Paid* and send a screenshot."
         ),
-        "send_screenshot": "📸 Please send the payment screenshot (of the transaction).",
-        "enter_email": "📧 Please enter your email address:",
+        "send_screenshot": "📸 Please send a screenshot of your USDT transfer confirmation.",
+        "enter_email": "📧 Please enter the email you want the service activated on:",
         "invalid_email": "❌ Invalid email address. Example: name@gmail.com",
         "processing": (
             "⏳ Your order is being processed.\n\n"
@@ -158,11 +156,10 @@ TEXT = {
             f"الشبكة: {USDT_NETWORK}\n"
             "العنوان:\n"
             f"`{USDT_ADDRESS}`\n\n"
-            "✅ بعد الدفع اضغط (I’ve Paid) وأرسل صورة."
+            "✅ بعد الدفع اضغط (I’ve Paid) وأرسل لقطة شاشة."
         ),
-        "send_screenshot": "📸 أرسل صورة الدفع (لقطة شاشة).",
-        "enter_email": "📧 Please enter the email you want the service activated on:",
- "📧 اكتب الإيميل الذي تريد التفعيل الخدمة عليه:",
+        "send_screenshot": "📸 أرسل لقطة شاشة لتأكيد تحويل USDT.",
+        "enter_email": "📧 اكتب الإيميل الذي تريد تفعيل الخدمة عليه:",
         "invalid_email": "❌ الإيميل غير صحيح. مثال: name@gmail.com",
         "processing": (
             "⏳ طلبك قيد المعالجة.\n\n"
@@ -208,6 +205,17 @@ def support_kb():
         [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)]
     ])
 
+def start_again_kb(lang="EN"):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Start Again" if lang=="EN" else "🔄 ابدأ من جديد", callback_data="start_again")]
+    ])
+
+def support_and_start_kb(lang="EN"):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)],
+        [InlineKeyboardButton("🔄 Start Again" if lang=="EN" else "🔄 ابدأ من جديد", callback_data="start_again")]
+    ])
+
 def services_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"{v['name']} — {v['usd']} USD", callback_data=f"svc:{k}")]
@@ -222,13 +230,12 @@ def pay_kb(lang="EN"):
     ])
 
 def usdt_kb(lang="EN"):
-    # Telegram can't auto-copy on callback; we show alert + send codeblock message
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📋 Copy Address" if lang=="EN" else "📋 نسخ العنوان", callback_data="copy"),
             InlineKeyboardButton("🧾 Open Copy Box" if lang=="EN" else "🧾 صندوق نسخ", switch_inline_query_current_chat=USDT_ADDRESS),
         ],
-        [InlineKeyboardButton("✅ I've Paid (Send Screenshot)" if lang=="EN" else "✅ دفعت (أرسل صورة)", callback_data="paid")],
+        [InlineKeyboardButton("✅ I've Paid (Send Screenshot)" if lang=="EN" else "✅ دفعت (أرسل لقطة شاشة)", callback_data="paid")],
         [InlineKeyboardButton("⬅️ Back" if lang=="EN" else "⬅️ رجوع", callback_data="back_payment")],
     ])
 
@@ -259,8 +266,24 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     lang = q.data.split(":")[1]
     context.user_data["lang"] = lang
-
     track_user(q.from_user.id)
+
+    await q.message.reply_text(
+        TEXT[lang]["welcome"],
+        parse_mode="Markdown",
+        reply_markup=services_kb()
+    )
+
+async def start_again(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    lang = get_lang(context)
+
+    # reset flow state but keep language
+    keep_lang = context.user_data.get("lang", "EN")
+    context.user_data.clear()
+    context.user_data["lang"] = keep_lang
 
     await q.message.reply_text(
         TEXT[lang]["welcome"],
@@ -301,7 +324,6 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"———"
         )
     text = "\n".join(lines)
-    # Telegram message length safety
     if len(text) > 3800:
         text = text[-3800:]
     await q.message.reply_text(text)
@@ -346,11 +368,12 @@ async def back_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     lang = get_lang(context)
-    # back to payment method screen for selected service
+
     key = context.user_data.get("service")
     if not key:
         await q.message.reply_text(TEXT[lang]["choose_service"], reply_markup=services_kb())
         return
+
     s = SERVICES[key]
     await q.message.reply_text(
         f"📦 *{s['name']}*\n"
@@ -383,7 +406,6 @@ async def pay_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def copy_addr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer(USDT_ADDRESS, show_alert=True)
-
     lang = get_lang(context)
     await q.message.reply_text(TEXT[lang]["copy_hint"], parse_mode="Markdown")
 
@@ -393,13 +415,11 @@ async def paid_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(q.from_user.id)
 
     lang = get_lang(context)
-
     context.user_data["await_img"] = True
     context.user_data["await_email"] = False
     await q.message.reply_text(TEXT[lang]["send_screenshot"])
 
 async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # accept screenshot only when awaiting
     if not context.user_data.get("await_img"):
         return
 
@@ -487,7 +507,8 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["await_email"] = False
 
-    await update.message.reply_text(TEXT[lang]["processing"], reply_markup=support_kb())
+    # ✅ processing + support + start again
+    await update.message.reply_text(TEXT[lang]["processing"], reply_markup=support_and_start_kb(lang))
 
     admin_text = (
         f"🆕 NEW ORDER\n\n"
@@ -499,7 +520,6 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 {update.effective_user.id}"
     )
 
-    # send to admin with buttons (+ photo if USDT)
     try:
         if ORDERS[oid].get("photo"):
             await context.bot.send_photo(
@@ -541,7 +561,7 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=user_id,
                 text=TEXT[lang]["confirm_text"],
                 parse_mode="Markdown",
-                reply_markup=support_kb()
+                reply_markup=support_and_start_kb(lang)
             )
             await context.bot.send_message(
                 chat_id=ADMIN_USER_ID,
@@ -552,7 +572,6 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=ADMIN_USER_ID,
                 text=TEXT["EN"]["admin_notify_failed"].format(oid=oid, err=str(e))
             )
-
         await q.edit_message_text(f"✅ CONFIRMED — {oid}")
 
     elif action == "adm_no":
@@ -562,7 +581,7 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=user_id,
                 text=TEXT[lang]["cancel_text"],
                 parse_mode="Markdown",
-                reply_markup=support_kb()
+                reply_markup=support_and_start_kb(lang)
             )
             await context.bot.send_message(
                 chat_id=ADMIN_USER_ID,
@@ -573,11 +592,9 @@ async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=ADMIN_USER_ID,
                 text=TEXT["EN"]["admin_notify_failed"].format(oid=oid, err=str(e))
             )
-
         await q.edit_message_text(f"❌ CANCELLED — {oid}")
 
     elif action == "adm_msg":
-        # FIX: store target in chat_data so it never gets lost
         context.chat_data["msg_target"] = user_id
         context.chat_data["msg_order_id"] = oid
         await q.message.reply_text(TEXT["EN"]["msg_prompt"])
@@ -633,6 +650,9 @@ def build():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
 
+    # Start again button
+    app.add_handler(CallbackQueryHandler(start_again, pattern=r"^start_again$"))
+
     # Language
     app.add_handler(CallbackQueryHandler(set_language, pattern=r"^lang:"))
 
@@ -655,11 +675,14 @@ def build():
     app.add_handler(PreCheckoutQueryHandler(precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_success))
 
-    # Admin callbacks (confirm/cancel/message)
+    # Admin callbacks
     app.add_handler(CallbackQueryHandler(admin_actions, pattern=r"^adm_"))
 
-    # IMPORTANT: Admin text handler must run BEFORE email handler
-    app.add_handler(MessageHandler(filters.User(ADMIN_USER_ID) & filters.TEXT & ~filters.COMMAND, admin_text_handler), group=0)
+    # Admin text handler must run BEFORE email handler
+    app.add_handler(
+        MessageHandler(filters.User(ADMIN_USER_ID) & filters.TEXT & ~filters.COMMAND, admin_text_handler),
+        group=0
+    )
 
     # Email handler for everyone
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, get_email), group=1)
@@ -668,5 +691,3 @@ def build():
 
 if __name__ == "__main__":
     build().run_polling()
-
-
