@@ -52,9 +52,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is missing. Set it in Render Environment Variables.")
 
-# IMPORTANT:
-# - ADMIN_USER_ID: رقم حسابك (user id) وليس group id
-# - إذا أنت كنت تستخدم رقمك سابقًا وتمام، خليه كما هو.
 ADMIN_USER_ID = 8021775847
 
 SUPPORT_USERNAME = "wesamhm1"  # without @
@@ -64,25 +61,16 @@ SUPPORT_COOLDOWN_SECONDS = 60 * 60  # 1 hour
 USDT_NETWORK = "TRON (TRC20)"
 USDT_ADDRESS = "TTmfGLZXWNxQGfi7YymVGk4CGhCaP2Q88J"
 
-# خدماتك (Stars أغلى - USDT أرخص)
-# stars_price = رقم نجوم تيليجرام
-# usdt_price = نص للعرض فقط مع $
 SERVICES = {
     "disney_1m":  {"name": "Disney+ 1 Month",            "stars_price": 450, "usdt_price": "$5.49"},
     "chatgpt_1m": {"name": "ChatGPT 1 Month",            "stars_price": 470, "usdt_price": "$5.99"},
     "yt_premium": {"name": "YouTube Premium 1 Month",    "stars_price": 470, "usdt_price": "$5.99"},
     "spotify_1m": {"name": "Spotify 1 Month",            "stars_price": 420, "usdt_price": "$4.99"},
-
-    # 🔧 Test / Donation (for owner testing)
     "donation_1": {"name": "☕ Donation / Test Payment",  "stars_price": 1,   "usdt_price": "$0.10"},
 }
 
-# ====== Storage ======
-# Orders in RAM (إذا البوت عمل restart، الطلبات القديمة من الذاكرة بتروح.
-# لاحقًا بنحوّلها SQLite بسهولة)
 ORDERS = {}  # order_id -> dict
 
-# Users storage for broadcast
 USERS_FILE = "users.json"
 
 def load_users() -> set[int]:
@@ -135,8 +123,12 @@ def continue_keyboard_stars() -> InlineKeyboardMarkup:
     ])
 
 def usdt_pay_keyboard() -> InlineKeyboardMarkup:
+    # ✅ زر inline يساعد المستخدم ينسخ العنوان بسهولة من نفس الشات
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Copy Address", callback_data="copy_usdt_addr")],
+        [
+            InlineKeyboardButton("📋 Copy Address", callback_data="copy_usdt_addr"),
+            InlineKeyboardButton("🧾 Open Copy Box", switch_inline_query_current_chat=USDT_ADDRESS),
+        ],
         [InlineKeyboardButton("✅ I've Paid (Send Screenshot)", callback_data="usdt_i_paid")],
     ])
 
@@ -341,7 +333,7 @@ async def pay_usdt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data["payment_method"] = "USDT"
-    context.user_data["paid"] = True  # نعتبره "مدفوع" بعد ما يرسل سكرين شوت لاحقًا
+    context.user_data["paid"] = False  # ✅ صح: ما نعتبره مدفوع إلا بعد إرسال الصورة
     context.user_data["awaiting_usdt_screenshot"] = False
     context.user_data["awaiting_email"] = False
 
@@ -361,8 +353,16 @@ async def pay_usdt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def copy_usdt_addr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ✅ بدل "كبسة فاضية": نطلع alert + نبعت رسالة عنوان قابلة للنسخ
     query = update.callback_query
-    await query.answer("✅ Copy the address and paste it in your wallet/app.", show_alert=True)
+    await query.answer(f"{USDT_ADDRESS}", show_alert=True)
+
+    await query.message.reply_text(
+        "📋 *USDT (TRC20) Address*\n\n"
+        f"`{USDT_ADDRESS}`\n\n"
+        "✅ You can *long-press* the address to copy it.",
+        parse_mode="Markdown"
+    )
 
 async def usdt_i_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -371,7 +371,7 @@ async def usdt_i_paid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["awaiting_usdt_screenshot"] = True
     context.user_data["awaiting_email"] = False
 
-    await query.message.reply_text("📸 Please upload a screenshot of your USDT payment confirmation.")
+    await query.message.reply_text("📸 Please upload a screenshot (any image is OK).")
 
 async def usdt_screenshot_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("awaiting_usdt_screenshot"):
@@ -386,6 +386,7 @@ async def usdt_screenshot_handler(update: Update, context: ContextTypes.DEFAULT_
     photo = update.message.photo[-1]
     context.user_data["awaiting_usdt_screenshot"] = False
     context.user_data["usdt_screenshot_file_id"] = photo.file_id
+    context.user_data["paid"] = True  # ✅ اعتبره مدفوع بعد الصورة
 
     # Now ask for email
     context.user_data["awaiting_email"] = True
@@ -481,7 +482,7 @@ async def email_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(
                 chat_id=ADMIN_USER_ID,
                 photo=order["usdt_screenshot_file_id"],
-                caption=admin_text + "\n📸 Payment Screenshot attached.",
+                caption=admin_text + "\n📸 Image attached.",
                 reply_markup=admin_order_keyboard(order_id),
             )
         else:
@@ -523,7 +524,7 @@ async def admin_actions_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Not allowed.", show_alert=True)
         return
 
-    data = query.data  # adm_confirm:OID
+    data = query.data
     action, order_id = data.split(":", 1)
 
     order = ORDERS.get(order_id)
@@ -544,7 +545,6 @@ async def admin_actions_handler(update: Update, context: ContextTypes.DEFAULT_TY
             ),
             reply_markup=support_keyboard_unlocked()
         )
-        # Edit admin message (photo caption vs text)
         try:
             await query.edit_message_caption(caption=f"✅ CONFIRMED — Order {order_id}", reply_markup=None)
         except Exception:
@@ -566,14 +566,13 @@ async def admin_actions_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(text=f"❌ CANCELLED — Order {order_id}")
 
     elif action == "adm_msg":
-        # Put admin in "send message to customer" mode
         context.user_data["admin_msg_target"] = customer_id
         context.user_data["admin_msg_order_id"] = order_id
         await query.message.reply_text("✍️ اكتب الرسالة الآن وسأرسلها للعميل (رسالة واحدة).")
 
 
 async def admin_message_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only admin can use this mode
+    # ✅ مهم: ما يشتغل إلا للأدمن ووقت يكون فعلًا بوضع إرسال رسالة
     if not is_admin(update.effective_user.id):
         return
 
@@ -616,7 +615,7 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=uid, text=msg)
             sent += 1
-            await asyncio.sleep(0.05)  # small delay to avoid flooding
+            await asyncio.sleep(0.05)
         except Exception:
             failed += 1
 
@@ -627,7 +626,6 @@ async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(f"👥 Total users: {len(USERS)}")
 
-
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Type /start to begin.")
 
@@ -636,43 +634,33 @@ async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_app() -> Application:
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Public
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(service_select_handler, pattern=r"^service:"))
 
-    # Payment method selection
     app.add_handler(CallbackQueryHandler(pay_stars_handler, pattern=r"^pay_stars$"))
     app.add_handler(CallbackQueryHandler(pay_usdt_handler, pattern=r"^pay_usdt$"))
 
-    # USDT buttons
     app.add_handler(CallbackQueryHandler(copy_usdt_addr_handler, pattern=r"^copy_usdt_addr$"))
     app.add_handler(CallbackQueryHandler(usdt_i_paid_handler, pattern=r"^usdt_i_paid$"))
 
-    # Stars payment
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     app.add_handler(CallbackQueryHandler(stars_continue_handler, pattern=r"^stars_continue$"))
 
-    # Screenshot handler
     app.add_handler(MessageHandler(filters.PHOTO, usdt_screenshot_handler))
 
-    # Support locked button
     app.add_handler(CallbackQueryHandler(support_locked_handler, pattern=r"^support_locked$"))
-
-    # Admin callbacks
     app.add_handler(CallbackQueryHandler(admin_actions_handler, pattern=r"^adm_"))
 
-    # Admin commands
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("users", users_cmd))
 
-    # Text handlers order is important:
-    # 1) admin message mode
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_text_handler))
-    # 2) email capture
+    # ✅ الترتيب + الفلاتر الصحيحة:
+    # 1) admin message mode ONLY for admin
+    app.add_handler(MessageHandler(filters.User(ADMIN_USER_ID) & filters.TEXT & ~filters.COMMAND, admin_message_text_handler))
+    # 2) email capture for everyone (including admin if he is buying)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, email_handler))
 
-    # Unknown
     app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
     return app
@@ -683,5 +671,4 @@ if __name__ == "__main__":
 
     asyncio.set_event_loop(asyncio.new_event_loop())
     application = build_app()
-
     application.run_polling()
