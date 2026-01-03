@@ -46,7 +46,12 @@ SERVICES = {
     "yt":      {"name": "YouTube Premium 1 Month", "usd": "$5.99", "stars": 470},
     "spotify": {"name": "Spotify 1 Month",         "usd": "$4.99", "stars": 420},
 }
-
+"donation": {
+    "name": "☕ Donation / Test Payment",
+    "usd": "$0.10",
+    "stars": 1
+},
+}
 # ================== PERSISTENT USERS ==================
 USERS_FILE = "users.json"
 
@@ -107,7 +112,7 @@ TEXT = {
             f"`{USDT_ADDRESS}`\n\n"
             "✅ After you pay, click *I've Paid* and send a screenshot."
         ),
-        "send_screenshot": "📸 Please send the payment screenshot (any image is OK).",
+        "send_screenshot": "📸 Please send the payment screenshot (of the transaction).",
         "enter_email": "📧 Please enter your email address:",
         "invalid_email": "❌ Invalid email address. Example: name@gmail.com",
         "processing": (
@@ -663,4 +668,5 @@ def build():
 
 if __name__ == "__main__":
     build().run_polling()
+
 
