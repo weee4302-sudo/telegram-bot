@@ -3,9 +3,6 @@ import asyncio
 import os
 import time
 import re
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -22,18 +19,21 @@ from telegram.ext import (
     filters,
 )
 
-# ================== BASIC SETUP ==================
+# ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN missing")
 
 ADMIN_USER_ID = 8021775847
+SUPPORT_USERNAME = "wesamhm1"
+SUPPORT_URL = f"https://t.me/{SUPPORT_USERNAME}"
+
 USDT_ADDRESS = "TTmfGLZXWNxQGfi7YymVGk4CGhCaP2Q88J"
 USDT_NETWORK = "TRC20"
 
 logging.basicConfig(level=logging.INFO)
 
-# ================== SERVICES ==================
+# ================== DATA ==================
 SERVICES = {
     "disney":  {"name": "Disney+ 1 Month",         "usd": "$5.49", "stars": 450},
     "chatgpt": {"name": "ChatGPT 1 Month",         "usd": "$5.99", "stars": 470},
@@ -42,24 +42,33 @@ SERVICES = {
 }
 
 ORDERS = {}
+USERS = set()
 
 # ================== UTILS ==================
-def is_admin(uid): return uid == ADMIN_USER_ID
-def valid_email(e): return re.match(r"[^@]+@[^@]+\.[^@]+", e)
+def is_admin(uid): 
+    return uid == ADMIN_USER_ID
 
-def order_id():
+def valid_email(e): 
+    return re.match(r"[^@]+@[^@]+\.[^@]+", e)
+
+def new_order_id():
     return f"O{int(time.time())}"
+
+def support_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)]
+    ])
 
 # ================== KEYBOARDS ==================
 def services_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{v['name']} — {v['usd']}", callback_data=f"svc:{k}")]
+        [InlineKeyboardButton(f"{v['name']} — {v['usd']} USD", callback_data=f"svc:{k}")]
         for k, v in SERVICES.items()
     ])
 
 def pay_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💵 Pay with USDT", callback_data="pay_usdt")],
+        [InlineKeyboardButton("💵 Pay with USDT (Best Price)", callback_data="pay_usdt")],
         [InlineKeyboardButton("⭐ Pay with Telegram Stars", callback_data="pay_stars")],
         [InlineKeyboardButton("⬅️ Back", callback_data="back")]
     ])
@@ -67,10 +76,11 @@ def pay_kb():
 def usdt_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Copy Address", callback_data="copy")],
-        [InlineKeyboardButton("✅ I've Paid (Send Screenshot)", callback_data="paid")]
+        [InlineKeyboardButton("✅ I've Paid (Send Screenshot)", callback_data="paid")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="back")]
     ])
 
-def admin_kb(oid):
+def admin_order_kb(oid):
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Confirm", callback_data=f"adm_ok:{oid}"),
@@ -79,44 +89,89 @@ def admin_kb(oid):
         [InlineKeyboardButton("💬 Message Customer", callback_data=f"adm_msg:{oid}")]
     ])
 
+def admin_panel_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Users", callback_data="admin_users")],
+        [InlineKeyboardButton("📦 Orders", callback_data="admin_orders")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+    ])
+
 # ================== START ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    USERS.add(update.effective_user.id)
     context.user_data.clear()
+
     await update.message.reply_text(
-        "👋 Welcome\n\n💲 Prices shown in USD\nChoose a service:",
+        "👋 *Welcome!*\n\n"
+        "Please choose the service you want to purchase:\n\n"
+        "💲 *Prices shown in USD*\n"
+        "_You can pay using USDT (best price) or Telegram Stars ⭐_",
+        parse_mode="Markdown",
         reply_markup=services_kb()
     )
 
+# ================== ADMIN PANEL ==================
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    await update.message.reply_text(
+        "🛠 *Admin Control Panel*",
+        parse_mode="Markdown",
+        reply_markup=admin_panel_kb()
+    )
+
+async def admin_users(update, context):
+    q = update.callback_query
+    await q.answer()
+    await q.message.reply_text(f"👥 Total users: {len(USERS)}")
+
+async def admin_orders(update, context):
+    q = update.callback_query
+    await q.answer()
+    if not ORDERS:
+        await q.message.reply_text("📦 No orders yet.")
+        return
+
+    text = "📦 *All Orders:*\n\n"
+    for oid, o in ORDERS.items():
+        text += f"🆔 {oid}\n📧 {o['email']}\n📦 {o['service']}\n💳 {o['pay']}\n———\n"
+
+    await q.message.reply_text(text, parse_mode="Markdown")
+
+async def admin_broadcast(update, context):
+    q = update.callback_query
+    await q.answer()
+    context.chat_data["broadcast"] = True
+    await q.message.reply_text("✍️ Send broadcast message:")
+
 # ================== SERVICE ==================
-async def service_select(update: Update, context):
+async def service_select(update, context):
     q = update.callback_query
     await q.answer()
     key = q.data.split(":")[1]
     s = SERVICES[key]
-
     context.user_data["service"] = key
 
     await q.message.reply_text(
         f"📦 *{s['name']}*\n"
-        f"💵 USDT: {s['usd']} (Best)\n"
-        f"⭐ Stars: {s['stars']}\n\n"
+        f"💵 USDT: {s['usd']} (Best price)\n"
+        f"⭐ Telegram Stars: {s['stars']}\n\n"
         "Choose payment method:",
         parse_mode="Markdown",
         reply_markup=pay_kb()
     )
 
-# ================== BACK ==================
 async def go_back(update, context):
     q = update.callback_query
     await q.answer()
-    await q.message.reply_text("⬅️ Choose service:", reply_markup=services_kb())
+    await q.message.reply_text("⬅️ Choose a service:", reply_markup=services_kb())
 
-# ================== USDT FLOW ==================
+# ================== USDT ==================
 async def pay_usdt(update, context):
     q = update.callback_query
     await q.answer()
-
     context.user_data["pay"] = "USDT"
+
     await q.message.reply_text(
         f"💵 *USDT Payment*\n\n"
         f"Network: {USDT_NETWORK}\n"
@@ -132,15 +187,13 @@ async def copy_addr(update, context):
 async def paid_usdt(update, context):
     q = update.callback_query
     await q.answer()
-    context.user_data["await_img"] = True
+    context.user_data["await_email"] = True
     await q.message.reply_text("📸 Send payment screenshot")
 
 async def get_photo(update, context):
-    photo = update.message.photo[-1]
-    context.user_data["photo"] = photo.file_id
-    context.user_data["await_img"] = False
+    context.user_data["photo"] = update.message.photo[-1].file_id
     context.user_data["await_email"] = True
-    await update.message.reply_text("📧 Enter your email")
+    await update.message.reply_text("📧 Enter your email address")
 
 # ================== STARS ==================
 async def pay_stars(update, context):
@@ -166,7 +219,7 @@ async def precheckout(update, context):
 async def stars_success(update, context):
     context.user_data["pay"] = "STARS"
     context.user_data["await_email"] = True
-    await update.message.reply_text("📧 Enter your email")
+    await update.message.reply_text("📧 Enter your email address")
 
 # ================== EMAIL ==================
 async def get_email(update, context):
@@ -175,10 +228,10 @@ async def get_email(update, context):
 
     email = update.message.text
     if not valid_email(email):
-        await update.message.reply_text("❌ Invalid email")
+        await update.message.reply_text("❌ Invalid email address")
         return
 
-    oid = order_id()
+    oid = new_order_id()
     svc = SERVICES[context.user_data["service"]]
 
     ORDERS[oid] = {
@@ -189,31 +242,35 @@ async def get_email(update, context):
         "photo": context.user_data.get("photo")
     }
 
-    await update.message.reply_text("⏳ Order processing…")
+    await update.message.reply_text(
+        "⏳ Your order is being processed.\n\n"
+        "If you need help, contact support below 👇",
+        reply_markup=support_kb()
+    )
 
-    text = (
+    admin_text = (
         f"🆕 NEW ORDER\n\n"
-        f"ID: {oid}\n"
-        f"Service: {svc['name']}\n"
-        f"Payment: {context.user_data['pay']}\n"
-        f"Email: {email}"
+        f"🆔 {oid}\n"
+        f"📦 {svc['name']}\n"
+        f"💳 {context.user_data['pay']}\n"
+        f"📧 {email}"
     )
 
     if ORDERS[oid]["photo"]:
         await context.bot.send_photo(
             ADMIN_USER_ID,
             ORDERS[oid]["photo"],
-            caption=text,
-            reply_markup=admin_kb(oid)
+            caption=admin_text,
+            reply_markup=admin_order_kb(oid)
         )
     else:
         await context.bot.send_message(
             ADMIN_USER_ID,
-            text,
-            reply_markup=admin_kb(oid)
+            admin_text,
+            reply_markup=admin_order_kb(oid)
         )
 
-# ================== ADMIN ==================
+# ================== ADMIN ACTIONS ==================
 async def admin_actions(update, context):
     q = update.callback_query
     await q.answer()
@@ -221,32 +278,62 @@ async def admin_actions(update, context):
     order = ORDERS[oid]
 
     if action == "adm_ok":
-        await context.bot.send_message(order["user"], "✅ Your order has been activated.")
+        await context.bot.send_message(
+            order["user"],
+            "✅ *Your order has been activated successfully!*\n\n"
+            "If you need help, contact support below 👇",
+            parse_mode="Markdown",
+            reply_markup=support_kb()
+        )
         await q.edit_message_text(f"✅ CONFIRMED {oid}")
 
     elif action == "adm_no":
-        await context.bot.send_message(order["user"], "❌ Your order was cancelled.")
+        await context.bot.send_message(
+            order["user"],
+            "❌ *Your order has been cancelled.*\n\n"
+            "Contact support for assistance 👇",
+            parse_mode="Markdown",
+            reply_markup=support_kb()
+        )
         await q.edit_message_text(f"❌ CANCELLED {oid}")
 
     elif action == "adm_msg":
-        context.user_data["msg_to"] = order["user"]
-        await q.message.reply_text("✍️ Send message:")
+        context.chat_data["msg_to"] = order["user"]
+        await q.message.reply_text("✍️ Type your message to the customer:")
 
 async def admin_send_msg(update, context):
     if not is_admin(update.effective_user.id):
         return
-    uid = context.user_data.get("msg_to")
-    if not uid:
+
+    if context.chat_data.get("broadcast"):
+        for uid in USERS:
+            try:
+                await context.bot.send_message(uid, update.message.text)
+            except:
+                pass
+        context.chat_data.pop("broadcast")
+        await update.message.reply_text("✅ Broadcast sent.")
         return
-    await context.bot.send_message(uid, update.message.text)
-    await update.message.reply_text("✅ Sent")
-    context.user_data.clear()
+
+    target = context.chat_data.get("msg_to")
+    if not target:
+        return
+
+    await context.bot.send_message(
+        target,
+        update.message.text,
+        reply_markup=support_kb()
+    )
+    context.chat_data.pop("msg_to")
+    await update.message.reply_text("✅ Message sent.")
 
 # ================== APP ==================
 def build():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+
     app.add_handler(CallbackQueryHandler(service_select, r"^svc:"))
     app.add_handler(CallbackQueryHandler(go_back, r"^back$"))
 
@@ -260,12 +347,15 @@ def build():
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_success))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, get_email))
+
     app.add_handler(CallbackQueryHandler(admin_actions, r"^adm_"))
+    app.add_handler(CallbackQueryHandler(admin_users, r"^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_orders, r"^admin_orders$"))
+    app.add_handler(CallbackQueryHandler(admin_broadcast, r"^admin_broadcast$"))
+
     app.add_handler(MessageHandler(filters.User(ADMIN_USER_ID) & filters.TEXT, admin_send_msg))
 
     return app
 
-# ================== RUN ==================
 if __name__ == "__main__":
-    app = build()
-    app.run_polling()
+    build().run_polling()
