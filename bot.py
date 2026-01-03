@@ -4,6 +4,8 @@ import os
 import time
 import re
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import (
     Update,
@@ -33,6 +35,9 @@ SUPPORT_URL = f"https://t.me/{SUPPORT_USERNAME}"
 USDT_ADDRESS = "TTmfGLZXWNxQGfi7YymVGk4CGhCaP2Q88J"
 USDT_NETWORK = "TRC20"
 
+# Render PORT (health server)
+PORT = int(os.environ.get("PORT", 10000))
+
 # ================== LOGGING ==================
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +50,8 @@ SERVICES = {
     "chatgpt":  {"name": "ChatGPT 1 Month",         "usd": "$5.99", "stars": 470},
     "yt":       {"name": "YouTube Premium 1 Month", "usd": "$5.99", "stars": 470},
     "spotify":  {"name": "Spotify 1 Month",         "usd": "$4.99", "stars": 420},
+
+    # Test / Donation
     "donation": {"name": "☕ Donation / Test Payment", "usd": "$0.10", "stars": 1},
 }
 
@@ -108,7 +115,8 @@ TEXT = {
             f"`{USDT_ADDRESS}`\n\n"
             "✅ After you pay, click *I've Paid* and send a screenshot."
         ),
-        "send_screenshot": "📸 Please send a screenshot of your USDT transfer confirmation.",
+        # ✅ changed: any screenshot is acceptable
+        "send_screenshot": "📸 Please send a screenshot of your USDT transfer.",
         "enter_email": "📧 Please enter the email you want the service activated on:",
         "invalid_email": "❌ Invalid email address. Example: name@gmail.com",
         "processing": (
@@ -118,7 +126,7 @@ TEXT = {
         "copy_hint": (
             "📋 *USDT (TRC20) Address*\n\n"
             f"`{USDT_ADDRESS}`\n\n"
-            "✅ You can *tap/long-press* the address to copy it."
+            "✅ You can tap/long-press the address to copy it."
         ),
         "admin_panel": "🛠 *Admin Control Panel*",
         "broadcast_prompt": "✍️ Send the broadcast message now:",
@@ -156,7 +164,8 @@ TEXT = {
             f"`{USDT_ADDRESS}`\n\n"
             "✅ بعد الدفع اضغط (I’ve Paid) وأرسل لقطة شاشة."
         ),
-        "send_screenshot": "📸 أرسل لقطة شاشة لتأكيد تحويل USDT.",
+        # ✅ changed: any screenshot is acceptable
+        "send_screenshot": "📸 أرسل لقطة شاشة لتحويل USDT.",
         "enter_email": "📧 اكتب الإيميل الذي تريد تفعيل الخدمة عليه:",
         "invalid_email": "❌ الإيميل غير صحيح. مثال: name@gmail.com",
         "processing": (
@@ -223,7 +232,6 @@ def pay_kb(lang="EN"):
     ])
 
 def usdt_kb(lang="EN"):
-    # Better UX: copy alert + send-address message for all devices
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📋 Copy Address" if lang=="EN" else "📋 نسخ العنوان", callback_data="copy"),
@@ -251,7 +259,6 @@ def admin_panel_kb():
 
 # ================== START / LANGUAGE ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logging.info("✅ /start triggered - language screen")
     track_user(update.effective_user.id)
     context.user_data.clear()
     await update.message.reply_text(TEXT["EN"]["choose_lang"], reply_markup=lang_kb())
@@ -270,13 +277,10 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_again(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Start again should go back to language selection (true fresh start)
     q = update.callback_query
     await q.answer()
-
     track_user(q.from_user.id)
     context.user_data.clear()
-
     await q.message.reply_text(TEXT["EN"]["choose_lang"], reply_markup=lang_kb())
 
 # ================== ADMIN PANEL ==================
@@ -331,7 +335,6 @@ async def service_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(q.from_user.id)
 
     lang = get_lang(context)
-
     key = q.data.split(":")[1]
     s = SERVICES[key]
     context.user_data["service"] = key
@@ -379,7 +382,6 @@ async def pay_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(q.from_user.id)
 
     lang = get_lang(context)
-
     context.user_data["pay"] = "USDT"
     context.user_data["await_img"] = False
     context.user_data["await_email"] = False
@@ -423,6 +425,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
         return
 
+    # ✅ Accept ANY photo (no validation)
     context.user_data["photo"] = update.message.photo[-1].file_id
     context.user_data["await_img"] = False
     context.user_data["await_email"] = True
@@ -643,7 +646,7 @@ def build():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
 
-    # Start again button
+    # Start again
     app.add_handler(CallbackQueryHandler(start_again, pattern=r"^start_again$"))
 
     # Language
@@ -659,12 +662,14 @@ def build():
     app.add_handler(CallbackQueryHandler(back_services, pattern=r"^back_services$"))
     app.add_handler(CallbackQueryHandler(back_payment, pattern=r"^back_payment$"))
 
+    # USDT
     app.add_handler(CallbackQueryHandler(pay_usdt, pattern=r"^pay_usdt$"))
     app.add_handler(CallbackQueryHandler(copy_addr, pattern=r"^copy$"))
     app.add_handler(CallbackQueryHandler(send_addr, pattern=r"^send_addr$"))
     app.add_handler(CallbackQueryHandler(paid_usdt, pattern=r"^paid$"))
     app.add_handler(MessageHandler(filters.PHOTO, get_photo))
 
+    # Stars
     app.add_handler(CallbackQueryHandler(pay_stars, pattern=r"^pay_stars$"))
     app.add_handler(PreCheckoutQueryHandler(precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_success))
@@ -683,11 +688,7 @@ def build():
 
     return app
 
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-PORT = int(os.environ.get("PORT", 10000))
-
+# ================== HEALTH SERVER (Render) ==================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -702,18 +703,16 @@ class HealthHandler(BaseHTTPRequestHandler):
 def run_http_server():
     HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
 
+# ================== MAIN ==================
 if __name__ == "__main__":
-    # شغّل بورت ل Render
+    # Start health server for Render
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # شيل أي webhook قديم وشغّل polling
     app = build()
 
-    async def on_startup(application):
+    async def on_startup(application: Application):
+        # Ensure no webhook & drop old updates to avoid getUpdates conflict
         await application.bot.delete_webhook(drop_pending_updates=True)
 
     app.post_init = on_startup
     app.run_polling(drop_pending_updates=True)
-
-
-
