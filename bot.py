@@ -45,8 +45,6 @@ SERVICES = {
     "chatgpt":  {"name": "ChatGPT 1 Month",         "usd": "$5.99", "stars": 470},
     "yt":       {"name": "YouTube Premium 1 Month", "usd": "$5.99", "stars": 470},
     "spotify":  {"name": "Spotify 1 Month",         "usd": "$4.99", "stars": 420},
-
-    # 🔧 Test / Donation
     "donation": {"name": "☕ Donation / Test Payment", "usd": "$0.10", "stars": 1},
 }
 
@@ -205,11 +203,6 @@ def support_kb():
         [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)]
     ])
 
-def start_again_kb(lang="EN"):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Start Again" if lang=="EN" else "🔄 ابدأ من جديد", callback_data="start_again")]
-    ])
-
 def support_and_start_kb(lang="EN"):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📩 Contact Support", url=SUPPORT_URL)],
@@ -230,10 +223,11 @@ def pay_kb(lang="EN"):
     ])
 
 def usdt_kb(lang="EN"):
+    # Better UX: copy alert + send-address message for all devices
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📋 Copy Address" if lang=="EN" else "📋 نسخ العنوان", callback_data="copy"),
-            InlineKeyboardButton("🧾 Open Copy Box" if lang=="EN" else "🧾 صندوق نسخ", switch_inline_query_current_chat=USDT_ADDRESS),
+            InlineKeyboardButton("📨 Send Address" if lang=="EN" else "📨 إرسال العنوان", callback_data="send_addr"),
         ],
         [InlineKeyboardButton("✅ I've Paid (Send Screenshot)" if lang=="EN" else "✅ دفعت (أرسل لقطة شاشة)", callback_data="paid")],
         [InlineKeyboardButton("⬅️ Back" if lang=="EN" else "⬅️ رجوع", callback_data="back_payment")],
@@ -257,6 +251,7 @@ def admin_panel_kb():
 
 # ================== START / LANGUAGE ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logging.info("✅ /start triggered - language screen")
     track_user(update.effective_user.id)
     context.user_data.clear()
     await update.message.reply_text(TEXT["EN"]["choose_lang"], reply_markup=lang_kb())
@@ -275,21 +270,14 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_again(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Start again should go back to language selection (true fresh start)
     q = update.callback_query
     await q.answer()
 
-    lang = get_lang(context)
-
-    # reset flow state but keep language
-    keep_lang = context.user_data.get("lang", "EN")
+    track_user(q.from_user.id)
     context.user_data.clear()
-    context.user_data["lang"] = keep_lang
 
-    await q.message.reply_text(
-        TEXT[lang]["welcome"],
-        parse_mode="Markdown",
-        reply_markup=services_kb()
-    )
+    await q.message.reply_text(TEXT["EN"]["choose_lang"], reply_markup=lang_kb())
 
 # ================== ADMIN PANEL ==================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -409,6 +397,12 @@ async def copy_addr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(context)
     await q.message.reply_text(TEXT[lang]["copy_hint"], parse_mode="Markdown")
 
+async def send_addr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    lang = get_lang(context)
+    await q.message.reply_text(TEXT[lang]["copy_hint"], parse_mode="Markdown")
+
 async def paid_usdt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -507,7 +501,6 @@ async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["await_email"] = False
 
-    # ✅ processing + support + start again
     await update.message.reply_text(TEXT[lang]["processing"], reply_markup=support_and_start_kb(lang))
 
     admin_text = (
@@ -668,6 +661,7 @@ def build():
 
     app.add_handler(CallbackQueryHandler(pay_usdt, pattern=r"^pay_usdt$"))
     app.add_handler(CallbackQueryHandler(copy_addr, pattern=r"^copy$"))
+    app.add_handler(CallbackQueryHandler(send_addr, pattern=r"^send_addr$"))
     app.add_handler(CallbackQueryHandler(paid_usdt, pattern=r"^paid$"))
     app.add_handler(MessageHandler(filters.PHOTO, get_photo))
 
