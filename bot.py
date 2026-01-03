@@ -683,14 +683,37 @@ def build():
 
     return app
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+PORT = int(os.environ.get("PORT", 10000))
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_http_server():
+    HTTPServer(("0.0.0.0", PORT), HealthHandler).serve_forever()
+
 if __name__ == "__main__":
+    # شغّل بورت ل Render
+    threading.Thread(target=run_http_server, daemon=True).start()
+
+    # شيل أي webhook قديم وشغّل polling
     app = build()
 
     async def on_startup(application):
-        # 🔥 مهم جدًا: احذف أي webhook قديم لنفس التوكن
         await application.bot.delete_webhook(drop_pending_updates=True)
 
     app.post_init = on_startup
-
     app.run_polling(drop_pending_updates=True)
+
+
 
